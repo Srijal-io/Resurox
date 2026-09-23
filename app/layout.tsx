@@ -86,6 +86,7 @@ export const metadata: Metadata = {
 };
 
 import { CookieConsent } from "@/components/CookieConsent";
+import { Analytics } from "@vercel/analytics/react";
 
 export default function RootLayout({
   children,
@@ -103,6 +104,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-[#F7F5F0] text-[#1C1B19] font-serif">
         {children}
         <CookieConsent />
+        <Analytics />
       </body>
     </html>
   );
