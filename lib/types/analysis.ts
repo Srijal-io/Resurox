@@ -20,12 +20,30 @@ export interface AuditTrailStage {
   notes?: string;
 }
 
+export type PipelineConfidence = 'high' | 'medium' | 'limited';
+
+export type DegradedReason =
+  | 'resume_extraction'
+  | 'job_extraction'
+  | 'explanation'
+  | 'github_enrichment'
+  | 'input_truncated';
+
+export interface AnalysisMeta {
+  requestId: string;
+  pipelineVersion: string;
+  confidence: PipelineConfidence;
+  degraded: DegradedReason[];
+}
+
 export interface AnalysisResponse {
   resume: CandidateProfile;
   jobDescription: JobRequirementModel;
   scores: ScoreBreakdown;
   multiDimensionalScores?: MultiDimensionalScores;
   requirementMatches?: RequirementMatch[];
+  headlineScore: number;
+  meta: AnalysisMeta;
   explanation: ExplanationFeedback;
   auditTrail?: AuditTrailStage[];
   rawText: {

@@ -9,6 +9,12 @@ export interface ScoreBreakdown {
     educationMatch: number;   // 0 - 100
     semanticMatch: number;    // 0 - 100
   };
+  applicability?: {
+    skills: boolean;
+    experience: boolean;
+    education: boolean;
+    semantic: boolean;
+  };
   skillsMatrix: SkillMatchItem[];
 }
 
@@ -19,4 +25,13 @@ export interface MultiDimensionalScores {
   resumeQualityScore: number;
   atsCompatibilityScore: number;
   evidenceCoverage: number; // 0 to 1 (e.g. 0.82 = 82%)
+  applicability?: {
+    jobMatch: boolean;
+    technicalCap: boolean;
+    experience: boolean;
+    evidence: boolean;
+    education: boolean;
+    resumeQuality: boolean;
+    atsCompatibility: boolean;
+  };
 }
