@@ -5,8 +5,7 @@ import { FileUpload } from '@/components/FileUpload';
 import { ResumeDocument } from '@/components/ResumeDocument';
 import { ProcessingState } from '@/components/ProcessingState';
 import { AnalysisResponse } from '@/lib/types';
-import { AIProvider } from '@/lib/ai/client';
-import { ChevronDown, ChevronUp, Sliders, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { ResuroxLogo } from '@/components/branding';
 import Link from 'next/link';
 
@@ -24,66 +23,39 @@ const LOADING_STAGES = [
   'Generating Report',
 ];
 
-const DEFAULT_MODELS: Record<AIProvider, string> = {
-  openrouter: 'meta-llama/llama-3.3-70b-instruct:free',
-  gemini: 'gemini-2.5-flash',
-  openai: 'gpt-4o-mini',
-};
-
 export default function WorkspacePage() {
   const [file, setFile] = useState<File | null>(null);
   const [jobDescription, setJobDescription] = useState<string>('');
-  
-  // Multi-provider settings state
-  const [provider, setProvider] = useState<AIProvider>('openrouter');
-  const [apiKey, setApiKey] = useState<string>('');
-  const [model, setModel] = useState<string>(DEFAULT_MODELS.openrouter);
-  
-  const [showConfig, setShowConfig] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [currentStageIdx, setCurrentStageIdx] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
 
-  // Load provider config from localStorage on mount safely
+  // FR-04: Purge legacy BYOK keys from localStorage/sessionStorage on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const savedProvider = (localStorage.getItem('ai_provider') as AIProvider) || 'openrouter';
-    const savedKey = localStorage.getItem(`ai_key_${savedProvider}`) || '';
-    const savedModel = localStorage.getItem(`ai_model_${savedProvider}`) || DEFAULT_MODELS[savedProvider];
-
-    const t = setTimeout(() => {
-      setProvider(savedProvider);
-      setApiKey(savedKey);
-      setModel(savedModel);
-    }, 0);
-    return () => clearTimeout(t);
+    try {
+      const keysToPurge = [
+        'ai_provider',
+        'ai_key_openrouter',
+        'ai_key_gemini',
+        'ai_key_openai',
+        'ai_model_openrouter',
+        'ai_model_gemini',
+        'ai_model_openai',
+        'openrouter_api_key',
+        'gemini_api_key',
+        'openai_api_key',
+        'resurox_api_key',
+      ];
+      keysToPurge.forEach((k) => {
+        localStorage.removeItem(k);
+        sessionStorage.removeItem(k);
+      });
+    } catch {
+      // Ignore storage access errors in restricted iframe/browser modes
+    }
   }, []);
-
-  const handleProviderChange = (newProvider: AIProvider) => {
-    setProvider(newProvider);
-    localStorage.setItem('ai_provider', newProvider);
-    
-    const savedKey = localStorage.getItem(`ai_key_${newProvider}`) || '';
-    const savedModel = localStorage.getItem(`ai_model_${newProvider}`) || DEFAULT_MODELS[newProvider];
-    setApiKey(savedKey);
-    setModel(savedModel);
-  };
-
-  const handleApiKeyChange = (keyVal: string) => {
-    setApiKey(keyVal);
-    localStorage.setItem(`ai_key_${provider}`, keyVal);
-  };
-
-  const handleModelChange = (modelVal: string) => {
-    setModel(modelVal);
-    localStorage.setItem(`ai_model_${provider}`, modelVal);
-  };
-
-  const handleClearKey = () => {
-    setApiKey('');
-    localStorage.removeItem(`ai_key_${provider}`);
-  };
 
   const handleAnalyze = async () => {
     if (!file) {
@@ -107,12 +79,10 @@ export default function WorkspacePage() {
     }, 1200);
 
     try {
+      // FR-01 & SEC-02: Send ONLY resume and jobDescription (no client credentials/models)
       const formData = new FormData();
       formData.append('resume', file);
       formData.append('jobDescription', jobDescription);
-      formData.append('provider', provider);
-      if (apiKey.trim()) formData.append('apiKey', apiKey.trim());
-      if (model.trim()) formData.append('model', model.trim());
 
       const res = await fetch('/api/analyze', {
         method: 'POST',
@@ -125,16 +95,18 @@ export default function WorkspacePage() {
       if (contentType.includes('application/json')) {
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || 'Unable to process document — verify your Provider API key or inputs.');
+          const errMsg = data?.error?.message || data?.error || 'Unable to process document. Please try again.';
+          throw new Error(errMsg);
         }
         setResult(data);
       } else {
         const text = await res.text();
         throw new Error(text.slice(0, 300) || `Server returned status ${res.status}`);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       clearInterval(stageInterval);
-      setError(err?.message || 'Unable to process document — verify API key or file format.');
+      const message = err instanceof Error ? err.message : 'Unable to process document. Please verify the file format and try again.';
+      setError(message);
     } finally {
       setLoading(false);
       setCurrentStageIdx(0);
@@ -158,7 +130,7 @@ export default function WorkspacePage() {
               <ResuroxLogo size={46} variant="mark" showTagline={false} />
             </Link>
             <span className="font-mono text-xs font-bold uppercase tracking-widest text-[#7A1F1F] border border-[#7A1F1F] px-2 py-0.5 ml-1">
-              UPGRADED v2.0
+              KEYLESS AI
             </span>
           </div>
 
@@ -192,93 +164,11 @@ export default function WorkspacePage() {
                 Evidence-Backed Candidate Evaluation
               </h2>
               <p className="font-serif italic text-base text-[#1C1B19]/70 max-w-xl mx-auto">
-                Upload your resume and paste the job description. Configure your preferred AI Provider, API Key, and Model below.
+                Upload your resume and paste the job description to receive an objective, deterministic match analysis.
               </p>
             </div>
 
             <div className="bg-[#F7F5F0] border-2 border-[#1C1B19] p-6 sm:p-10 shadow-lg space-y-8 rounded-none">
-              {/* Multi-Provider Configuration Box */}
-              <div className="border border-[#1C1B19]/20 bg-[#1C1B19]/5 p-4 rounded-none">
-                <button
-                  type="button"
-                  onClick={() => setShowConfig(!showConfig)}
-                  className="w-full flex items-center justify-between font-mono text-xs font-bold uppercase tracking-wider text-[#1C1B19]"
-                >
-                  <div className="flex items-center space-x-2">
-                    <Sliders className="w-4 h-4 text-[#7A1F1F]" />
-                    <span>
-                      AI Provider Settings: <span className="underline uppercase">{provider}</span> ({model})
-                    </span>
-                  </div>
-                  {showConfig ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                </button>
-
-                {showConfig && (
-                  <div className="mt-4 pt-4 border-t border-[#1C1B19]/10 space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      {/* Provider Selector */}
-                      <div>
-                        <label className="block font-mono text-[10px] font-bold uppercase tracking-wider text-[#1C1B19]/70 mb-1">
-                          Service Provider
-                        </label>
-                        <select
-                          value={provider}
-                          onChange={(e) => handleProviderChange(e.target.value as AIProvider)}
-                          className="w-full bg-[#F7F5F0] border border-[#1C1B19]/40 focus:border-[#1C1B19] p-2 font-mono text-xs text-[#1C1B19] outline-none"
-                        >
-                          <option value="openrouter">OpenRouter (Default / Free)</option>
-                          <option value="gemini">Google Gemini</option>
-                          <option value="openai">OpenAI</option>
-                        </select>
-                      </div>
-
-                      {/* API Key Input */}
-                      <div>
-                        <label className="block font-mono text-[10px] font-bold uppercase tracking-wider text-[#1C1B19]/70 mb-1">
-                          API Key {apiKey ? '(Saved)' : '(Optional / Default fallback)'}
-                        </label>
-                        <input
-                          type="password"
-                          value={apiKey}
-                          onChange={(e) => handleApiKeyChange(e.target.value)}
-                          placeholder={provider === 'openrouter' ? 'sk-or-v1-...' : provider === 'openai' ? 'sk-...' : 'AIzaSy...'}
-                          className="w-full bg-[#F7F5F0] border border-[#1C1B19]/40 focus:border-[#1C1B19] p-2 font-mono text-xs text-[#1C1B19] outline-none"
-                        />
-                      </div>
-
-                      {/* Model Name Input */}
-                      <div>
-                        <label className="block font-mono text-[10px] font-bold uppercase tracking-wider text-[#1C1B19]/70 mb-1">
-                          Model Identifier
-                        </label>
-                        <input
-                          type="text"
-                          value={model}
-                          onChange={(e) => handleModelChange(e.target.value)}
-                          placeholder={DEFAULT_MODELS[provider]}
-                          className="w-full bg-[#F7F5F0] border border-[#1C1B19]/40 focus:border-[#1C1B19] p-2 font-mono text-xs text-[#1C1B19] outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1">
-                      <p className="font-serif italic text-xs text-[#1C1B19]/70">
-                        🔒 <span className="font-semibold">Security Note:</span> Custom API keys are stored in this browser only and are never saved or logged on the server. Leave blank to use default fallback.
-                      </p>
-                      {apiKey && (
-                        <button
-                          type="button"
-                          onClick={handleClearKey}
-                          className="text-[11px] font-mono font-semibold text-[#7A1F1F] underline hover:no-underline tracking-wider uppercase"
-                        >
-                          Clear stored key
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
               {/* Error Notice */}
               {error && (
                 <div className="p-4 border-l-4 border-[#8B2E2E] bg-[#8B2E2E]/10 font-mono text-xs text-[#8B2E2E]">
@@ -305,7 +195,11 @@ export default function WorkspacePage() {
                 </div>
               </div>
 
-              <div className="pt-2 flex justify-end">
+              {/* UX-8: Privacy Statement near button */}
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <p className="font-serif italic text-xs text-[#1C1B19]/70 text-center sm:text-left">
+                  🔒 <span className="font-semibold">Privacy First:</span> Documents are processed in-memory and never stored. No API key or account required.
+                </p>
                 <button
                   type="button"
                   disabled={!file || !jobDescription.trim()}
@@ -316,7 +210,7 @@ export default function WorkspacePage() {
                       : 'bg-[#1C1B19] text-[#F7F5F0] hover:bg-[#7A1F1F]'
                   }`}
                 >
-                  Submit Document for Markup
+                  Analyze Resume
                 </button>
               </div>
             </div>

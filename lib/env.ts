@@ -1,25 +1,14 @@
-/**
- * Helper to safely retrieve environment variables with explicit runtime validation.
- * Throws a descriptive error if the variable is undefined, empty, or whitespace.
- */
-export function getEnvVar(name: string, fallback?: string): string {
-  const val = process.env[name];
-  if (val && val.trim().length > 0) {
-    return val.trim();
-  }
-  if (fallback !== undefined && fallback.trim().length > 0) {
-    return fallback.trim();
-  }
-  throw new Error(`Missing required environment variable: "${name}". Please check your server environment configuration.`);
-}
+import { getServerConfig, getProviderApiKey, getEnvVar } from './config';
+
+export { getServerConfig, getProviderApiKey, getEnvVar };
 
 /**
- * Helper to resolve an API key from either user input (FormData) or server environment variable.
- * Validates that at least one valid non-empty key is present.
+ * Server-only key resolver. Ignores/rejects client supplied keys per SEC-02 & SEC-03.
  */
-export function resolveApiKey(userInputKey?: string | null, envVarName: string = 'OPENROUTER_API_KEY'): string {
-  if (userInputKey && userInputKey.trim().length > 0) {
-    return userInputKey.trim();
+export function resolveApiKey(_ignoredClientKey?: string | null, envVarName: string = 'GROQ_API_KEY'): string {
+  const envVal = process.env[envVarName]?.trim();
+  if (envVal) {
+    return envVal;
   }
   return getEnvVar(envVarName);
 }

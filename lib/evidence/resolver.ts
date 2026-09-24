@@ -1,5 +1,5 @@
 import { CandidateProfile } from '../types/resume';
-import { EvidenceItem, SkillClaimEvidence, EvidenceStatus } from '../types/evidence';
+import { SkillClaimEvidence } from '../types/evidence';
 import { normalizeSkillName } from '../normalization/skills';
 
 export function resolveCandidateEvidence(

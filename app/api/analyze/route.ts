@@ -1,188 +1,286 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractTextFromFile } from '@/lib/extractor';
-import { parseResume } from '@/lib/ai/resumeParser';
-import { parseJobDescription } from '@/lib/ai/jobParser';
-import { fetchGitHubPublicEvidence } from '@/lib/enrichment/github';
-import { resolveCandidateEvidence } from '@/lib/evidence/resolver';
-import { matchRequirements } from '@/lib/matching/requirements';
-import { computeMultiDimensionalScores } from '@/lib/scoring/rubric';
-import { computeScores } from '@/lib/scorer';
-import { computeTextSimilarityScore, generateExplanationLayer } from '@/lib/ai';
-import { generateUpgradedExplanation } from '@/lib/ai/explanation';
-import { AnalysisResponse, AuditTrailStage } from '@/lib/types';
-import { resolveApiKey } from '@/lib/env';
-import { checkRateLimit, extractClientIp } from '@/lib/ratelimit';
+import { runAnalysisPipeline } from '@/lib/pipeline/analyze';
+import { PipelineError } from '@/lib/pipeline/errors';
+import { extractAndHashClientIp } from '@/lib/security/ip';
+import { checkSecurityRateLimits } from '@/lib/security/ratelimit';
+import { checkAndReserveDailyBudget, reconcileBudgetSpend, releaseBudgetReservation, isKillSwitchActive } from '@/lib/security/budget';
+import { tryAcquireConcurrencySlot, releaseConcurrencySlot } from '@/lib/security/concurrency';
+import { verifyBotToken } from '@/lib/security/botcheck';
+import {
+  validateRequestMethod,
+  validateRequestOrigin,
+  validateContentLengthHeader,
+  validateForbiddenCredentialHeaders,
+  validateMultipartFieldAllowList,
+} from '@/lib/security/validation';
+import { securityLogger } from '@/lib/security/logger';
 
 export const maxDuration = 60; // 60s timeout limit
 
-const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB limit
-const MAX_JD_LENGTH = 20000; // 20k character limit
-const MAX_RESUME_TEXT_LENGTH = 30000; // 30k character limit (safe truncation)
-
+/**
+ * Thin Hardened Analysis API Controller (PRD §5.1, §6, Phase 4).
+ * Enforces cheapest-to-most-expensive security pipeline before invoking AI.
+ */
 export async function POST(req: NextRequest) {
+  const requestId = crypto.randomUUID();
   const startTime = Date.now();
-  const auditTrail: AuditTrailStage[] = [];
 
-  // IP Rate Limiting Check (15 requests / minute per IP)
-  const clientIp = extractClientIp(req.headers);
-  const rateLimit = await checkRateLimit(clientIp, 15, 60000);
-  if (!rateLimit.success) {
+  const standardHeaders = {
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Request-Id': requestId,
+  };
+
+  // 1. Kill Switch Check (SEC-21)
+  if (await isKillSwitchActive()) {
+    securityLogger.warn('Request rejected: Kill switch is active', { requestId, status: 'REJECTED', errorCode: 'SERVICE_BUSY' });
     return NextResponse.json(
-      { error: `Too many analysis requests. Please wait ${Math.ceil(rateLimit.resetInMs / 1000)} seconds before trying again.` },
+      {
+        error: {
+          code: 'SERVICE_BUSY',
+          message: 'Resurox is temporarily unavailable for maintenance. Please check back shortly.',
+          requestId,
+          retryAfterSec: 60,
+        },
+      },
+      { status: 503, headers: { ...standardHeaders, 'Retry-After': '60' } }
+    );
+  }
+
+  // 2. Method Validation (SEC-17)
+  const methodCheck = validateRequestMethod(req);
+  if (!methodCheck.valid) {
+    return NextResponse.json(
+      { error: { code: methodCheck.errorCode, message: methodCheck.errorMessage, requestId } },
+      { status: methodCheck.httpStatus || 405, headers: { ...standardHeaders, ...(methodCheck.headers || {}) } }
+    );
+  }
+
+  // 3. Origin Validation (SEC-17)
+  const originCheck = validateRequestOrigin(req);
+  if (!originCheck.valid) {
+    securityLogger.warn('Request rejected: Disallowed Origin', { requestId, status: 'REJECTED', errorCode: originCheck.errorCode });
+    return NextResponse.json(
+      { error: { code: originCheck.errorCode, message: originCheck.errorMessage, requestId } },
+      { status: originCheck.httpStatus || 403, headers: standardHeaders }
+    );
+  }
+
+  // 4. Forbidden Client Credentials Header Check (SEC-02)
+  const credsCheck = validateForbiddenCredentialHeaders(req);
+  if (!credsCheck.valid) {
+    securityLogger.warn('Request rejected: Prohibited credential header present', { requestId, status: 'REJECTED' });
+    return NextResponse.json(
+      { error: { code: credsCheck.errorCode, message: credsCheck.errorMessage, requestId } },
+      { status: credsCheck.httpStatus || 400, headers: standardHeaders }
+    );
+  }
+
+  // 5. Content-Length Pre-Check (SEC-04)
+  const lengthCheck = validateContentLengthHeader(req);
+  if (!lengthCheck.valid) {
+    return NextResponse.json(
+      { error: { code: lengthCheck.errorCode, message: lengthCheck.errorMessage, requestId } },
+      { status: lengthCheck.httpStatus || 400, headers: standardHeaders }
+    );
+  }
+
+  // 6. Trusted Client IP & Rate Limiting (SEC-13, SEC-14)
+  const { hashedIp, hashedPrefix } = extractAndHashClientIp(req.headers);
+  const rateLimit = await checkSecurityRateLimits(hashedIp);
+  if (!rateLimit.allowed) {
+    securityLogger.warn('Request rate limited', { requestId, hashedIpPrefix: hashedPrefix, status: 'REJECTED', errorCode: 'RATE_LIMITED' });
+    const retrySec = rateLimit.retryAfterSec || 60;
+    return NextResponse.json(
+      {
+        error: {
+          code: 'RATE_LIMITED',
+          message: "You've reached the usage limit for now. Please try again later.",
+          requestId,
+          retryAfterSec: retrySec,
+        },
+      },
       {
         status: 429,
         headers: {
-          'Retry-After': String(Math.ceil(rateLimit.resetInMs / 1000)),
-          'X-RateLimit-Limit': '15',
+          ...standardHeaders,
+          'Retry-After': String(retrySec),
           'X-RateLimit-Remaining': '0',
         },
       }
     );
   }
 
-  const logStage = (stageName: string, durationMs: number, status: 'SUCCESS' | 'WARNING' | 'FAILED', notes?: string) => {
-    auditTrail.push({ stageName, timestamp: new Date().toISOString(), durationMs, status, notes });
-  };
+  // 7. Early Bot Verification via X-Bot-Token Header (SEC-15)
+  const botToken = req.headers.get('x-bot-token');
+  const botCheck = await verifyBotToken(botToken, req.headers.get('cf-connecting-ip') || undefined);
+  if (!botCheck.success) {
+    securityLogger.warn('Request rejected: Bot verification failed', { requestId, hashedIpPrefix: hashedPrefix, status: 'REJECTED', errorCode: 'BOT_CHECK_FAILED' });
+    return NextResponse.json(
+      {
+        error: {
+          code: 'BOT_CHECK_FAILED',
+          message: "We couldn't verify this request. Please refresh and try again.",
+          requestId,
+        },
+      },
+      { status: 403, headers: standardHeaders }
+    );
+  }
+
+  // 8. Concurrency Semaphore (SEC-29)
+  const concurrency = tryAcquireConcurrencySlot();
+  if (!concurrency.acquired) {
+    securityLogger.warn('Request rejected: Concurrency limit reached', { requestId, status: 'REJECTED', errorCode: 'SERVICE_BUSY' });
+    return NextResponse.json(
+      {
+        error: {
+          code: 'SERVICE_BUSY',
+          message: 'Resurox is busy right now. Please try again in a moment.',
+          requestId,
+          retryAfterSec: 5,
+        },
+      },
+      { status: 503, headers: { ...standardHeaders, 'Retry-After': '5' } }
+    );
+  }
+
+  // 9. Daily AI Budget Check & Reservation (SEC-20)
+  const budgetReservation = await checkAndReserveDailyBudget();
+  if (!budgetReservation.allowed) {
+    releaseConcurrencySlot();
+    securityLogger.warn('Request rejected: Daily budget reached or kill switch active', { requestId, status: 'REJECTED', errorCode: 'SERVICE_BUSY' });
+    return NextResponse.json(
+      {
+        error: {
+          code: 'SERVICE_BUSY',
+          message: 'Resurox has reached its daily processing capacity. Please check back tomorrow.',
+          requestId,
+          retryAfterSec: 3600,
+        },
+      },
+      { status: 503, headers: { ...standardHeaders, 'Retry-After': '3600' } }
+    );
+  }
+
+  let actualCostMicroDollars = 0;
+  let pipelineSucceeded = false;
 
   try {
-    const formData = await req.formData();
-    const file = formData.get('resume') as File | null;
-    const jdText = formData.get('jobDescription') as string | null;
-    const provider = (formData.get('provider') as any) || 'openrouter';
-    const rawApiKey = formData.get('apiKey') as string | null;
-    const model = (formData.get('model') as string | null) || undefined;
-
-    // Resolve API key with explicit runtime validation (throws descriptive error if missing)
-    const envKeyMap: Record<string, string> = {
-      openrouter: 'OPENROUTER_API_KEY',
-      gemini: 'GEMINI_API_KEY',
-      openai: 'OPENAI_API_KEY',
-    };
-    const targetEnvVar = envKeyMap[provider] || 'OPENROUTER_API_KEY';
-    const apiKey: string = resolveApiKey(rawApiKey, targetEnvVar);
-
-    const aiConfig = { provider, apiKey, model };
-
-    // 1. File Validation
-    if (!file) {
-      return NextResponse.json({ error: 'Please upload a valid resume file.' }, { status: 400 });
+    // 10. Parse Multipart Body & Validate Field Allow-List (SEC-02, SEC-04)
+    let formData: FormData;
+    try {
+      formData = await req.formData();
+    } catch (formErr) {
+      throw new PipelineError('INVALID_REQUEST', 'Failed to parse multipart form payload.');
     }
 
-    const fileExt = file.name.split('.').pop()?.toLowerCase();
-    if (fileExt !== 'pdf' && fileExt !== 'docx') {
-      return NextResponse.json({ error: 'Invalid file format. Only PDF (.pdf) and Word (.docx) documents are supported.' }, { status: 400 });
-    }
-
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      return NextResponse.json({ error: 'File size exceeds the 5MB maximum limit.' }, { status: 400 });
-    }
-
-    if (file.size === 0) {
-      return NextResponse.json({ error: 'Uploaded file is empty.' }, { status: 400 });
-    }
-
-    if (!jdText || !jdText.trim()) {
-      return NextResponse.json({ error: 'Please provide a non-empty job description.' }, { status: 400 });
-    }
-
-    if (jdText.length > MAX_JD_LENGTH) {
-      return NextResponse.json(
-        { error: `Job description exceeds the maximum length of ${MAX_JD_LENGTH.toLocaleString()} characters (received ${jdText.length.toLocaleString()}).` },
-        { status: 400 }
+    const fieldValidation = validateMultipartFieldAllowList(formData);
+    if (!fieldValidation.valid || !fieldValidation.file || !fieldValidation.jobDescription) {
+      throw new PipelineError(
+        fieldValidation.errorCode as any || 'INVALID_REQUEST',
+        fieldValidation.errorMessage || 'Invalid form submission.'
       );
     }
 
-    // 2. Extract Document Text
-    const t0 = Date.now();
-    const rawResumeText = await extractTextFromFile(file);
-    if (!rawResumeText || rawResumeText.trim().length < 20) {
-      return NextResponse.json({ error: 'Could not extract sufficient text from the uploaded document.' }, { status: 400 });
+    // 11. Run Centralized Pipeline Orchestrator (FR-02, Phase 2–4)
+    const pipelineResponse = await runAnalysisPipeline({
+      file: fieldValidation.file,
+      jobDescriptionText: fieldValidation.jobDescription,
+      requestId,
+      signal: req.signal,
+      clientIpPrefix: hashedPrefix,
+    });
+
+    pipelineSucceeded = true;
+    actualCostMicroDollars = pipelineResponse.estimatedCostMicroDollars || 0;
+
+    securityLogger.info('Analysis request completed successfully', {
+      requestId,
+      durationMs: Date.now() - startTime,
+      status: 'SUCCESS',
+      httpStatus: 200,
+      hashedIpPrefix: hashedPrefix,
+    });
+
+    return NextResponse.json(pipelineResponse, {
+      status: 200,
+      headers: standardHeaders,
+    });
+  } catch (error: unknown) {
+    if (error instanceof PipelineError) {
+      securityLogger.warn(`Pipeline error: ${error.code}`, {
+        requestId,
+        durationMs: Date.now() - startTime,
+        status: 'WARNING',
+        errorCode: error.code,
+        httpStatus: error.httpStatus,
+        hashedIpPrefix: hashedPrefix,
+      });
+
+      return NextResponse.json(
+        {
+          error: {
+            code: error.code,
+            message: error.userMessage,
+            requestId,
+            ...(error.retryAfterSec ? { retryAfterSec: error.retryAfterSec } : {}),
+          },
+        },
+        {
+          status: error.httpStatus,
+          headers: {
+            ...standardHeaders,
+            ...(error.retryAfterSec ? { 'Retry-After': String(error.retryAfterSec) } : {}),
+          },
+        }
+      );
     }
 
-    // Safely truncate resume text if it exceeds MAX_RESUME_TEXT_LENGTH to prevent LLM prompt overflow
-    const safeResumeText = rawResumeText.length > MAX_RESUME_TEXT_LENGTH 
-      ? rawResumeText.slice(0, MAX_RESUME_TEXT_LENGTH)
-      : rawResumeText;
+    const errorMsg = error instanceof Error ? error.message : 'An unexpected error occurred during analysis.';
+    securityLogger.error('Unhandled analysis failure', {
+      requestId,
+      durationMs: Date.now() - startTime,
+      status: 'FAILED',
+      errorCode: 'ANALYSIS_FAILED',
+      httpStatus: 500,
+      hashedIpPrefix: hashedPrefix,
+    });
 
-    logStage('Document Extraction', Date.now() - t0, 'SUCCESS');
-
-    // 3. Parallel AI Candidate & Job Parsing
-    const t1 = Date.now();
-    const [candidateProfile, jobRequirementModel] = await Promise.all([
-      parseResume(safeResumeText, aiConfig),
-      parseJobDescription(jdText, aiConfig),
-    ]);
-    logStage('Candidate & Job Parsing', Date.now() - t1, 'SUCCESS');
-
-    // 4. Optional GitHub Evidence Enrichment
-    const t2 = Date.now();
-    const githubRepos = candidateProfile.basics?.github
-      ? await fetchGitHubPublicEvidence(candidateProfile.basics.github)
-      : [];
-    logStage('GitHub Enrichment', Date.now() - t2, githubRepos.length > 0 ? 'SUCCESS' : 'SUCCESS', githubRepos.length > 0 ? `Enriched ${githubRepos.length} public repos` : 'No GitHub URL provided');
-
-    // 5. Evidence Collection & Requirement Matching
-    const t3 = Date.now();
-    const evidenceList = resolveCandidateEvidence(candidateProfile, githubRepos);
-    const requirementMatches = matchRequirements(jobRequirementModel, evidenceList);
-    logStage('Evidence & Requirement Matching', Date.now() - t3, 'SUCCESS');
-
-    // 6. Multi-Dimensional & Backward-Compatible Pure Scoring Engine
-    const t4 = Date.now();
-    const semanticSimilarity = computeTextSimilarityScore(safeResumeText, jdText);
-    const legacyScores = computeScores(candidateProfile, jobRequirementModel, semanticSimilarity);
-
-    const { scores: multiDimensionalScores, evidenceCoverage } = computeMultiDimensionalScores(
-      requirementMatches,
-      evidenceList,
-      legacyScores.subScores.skillsMatch,
-      legacyScores.subScores.experienceMatch,
-      legacyScores.subScores.educationMatch
-    );
-    logStage('Deterministic Rubric Scoring', Date.now() - t4, 'SUCCESS');
-
-    // 7. Factual Explanation Engine Generation
-    const t5 = Date.now();
-    const upgradedExplanation = await generateUpgradedExplanation(
-      candidateProfile,
-      jobRequirementModel,
-      legacyScores,
-      multiDimensionalScores,
-      requirementMatches,
-      aiConfig
-    );
-
-    // Fallback legacy explanation check
-    const legacyExplanation = await generateExplanationLayer(candidateProfile, jobRequirementModel, legacyScores, aiConfig);
-    logStage('Explanation Engine', Date.now() - t5, 'SUCCESS');
-
-    logStage('Total Analysis Pipeline', Date.now() - startTime, 'SUCCESS');
-
-    const responseData: AnalysisResponse = {
-      resume: candidateProfile,
-      jobDescription: jobRequirementModel,
-      scores: legacyScores,
-      multiDimensionalScores,
-      requirementMatches,
-      explanation: {
-        ...upgradedExplanation,
-        strengths: upgradedExplanation.strengths || legacyExplanation.strengths,
-        areasToImprove: upgradedExplanation.areasToImprove || legacyExplanation.areasToImprove,
-        recommendations: upgradedExplanation.recommendations || legacyExplanation.recommendations,
-      },
-      auditTrail,
-      rawText: {
-        resumeSnippet: rawResumeText.substring(0, 300) + '...',
-        jdSnippet: jdText.substring(0, 300) + '...',
-      },
-    };
-
-    return NextResponse.json(responseData, { status: 200 });
-  } catch (error: any) {
-    console.error('Upgraded Analysis API Error:', error);
     return NextResponse.json(
-      { error: error?.message || 'An unexpected error occurred during analysis.' },
-      { status: 500 }
+      {
+        error: {
+          code: 'ANALYSIS_FAILED',
+          message: errorMsg,
+          requestId,
+        },
+      },
+      {
+        status: 500,
+        headers: standardHeaders,
+      }
     );
+  } finally {
+    // 12. Release Concurrency Slot and Reconcile / Release Budget Reservation
+    releaseConcurrencySlot();
+    if (pipelineSucceeded) {
+      await reconcileBudgetSpend(actualCostMicroDollars);
+    } else {
+      await releaseBudgetReservation();
+    }
   }
+}
+
+// SEC-17: Explicit 405 for all other HTTP methods
+export async function GET() {
+  return NextResponse.json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Use POST.' } }, { status: 405, headers: { Allow: 'POST' } });
+}
+export async function PUT() {
+  return NextResponse.json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Use POST.' } }, { status: 405, headers: { Allow: 'POST' } });
+}
+export async function DELETE() {
+  return NextResponse.json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Use POST.' } }, { status: 405, headers: { Allow: 'POST' } });
+}
+export async function OPTIONS() {
+  return NextResponse.json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Use POST.' } }, { status: 405, headers: { Allow: 'POST' } });
 }
