@@ -193,9 +193,9 @@ export default function PrivacyPage() {
                 </thead>
                 <tbody className="divide-y divide-[#1C1B19]/15 bg-white/30">
                   <tr>
-                    <td className="p-3 font-semibold">OpenRouter / OpenAI / Google Gemini</td>
+                    <td className="p-3 font-semibold">Third-Party AI Service Providers</td>
                     <td className="p-3">Extracted resume text, job requirements, prompt templates</td>
-                    <td className="p-3">Text parsing, semantic classification, and explanation synthesis.</td>
+                    <td className="p-3">Text parsing, semantic classification, and explanation synthesis (e.g. Groq Cloud).</td>
                   </tr>
                   <tr>
                     <td className="p-3 font-semibold">GitHub REST API</td>
@@ -206,7 +206,7 @@ export default function PrivacyPage() {
               </table>
             </div>
             <p className="font-serif italic text-xs text-[#1C1B19]/60">
-              Note: When utilizing your own API keys, third-party provider usage is subject to the respective terms and privacy policies of OpenRouter, OpenAI, or Google.
+              Note: Third-party AI provider API usage is subject to the respective terms and privacy policies of the configured server-side provider.
             </p>
           </section>
 

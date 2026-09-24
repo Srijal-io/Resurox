@@ -1,6 +1,6 @@
 {
-  "name": "ai-resume-analyzer-tmp",
-  "version": "0.1.0",
+  "name": "resurox",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,7 +8,15 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/regression.test.ts && tsx __tests__/scorer.test.ts",
+    "test": "tsx tests/phase1.test.ts && tsx tests/phase2.test.ts && tsx tests/purity.test.ts && tsx tests/experience.test.ts && tsx tests/antigaming.test.ts && tsx tests/property.test.ts && tsx tests/regression_fixtures.test.ts && tsx tests/security_route.test.ts && tsx tests/security_upload.test.ts && tsx tests/security_privacy.test.ts && tsx tests/phase4b.test.ts && tsx tests/regression.test.ts && tsx __tests__/scorer.test.ts",
+    "test:unit": "tsx tests/phase1.test.ts && tsx tests/phase2.test.ts && tsx tests/purity.test.ts && tsx tests/experience.test.ts && tsx __tests__/scorer.test.ts",
+    "test:security": "tsx tests/security_route.test.ts && tsx tests/security_upload.test.ts && tsx tests/security_privacy.test.ts",
+    "test:property": "tsx tests/property.test.ts && tsx tests/antigaming.test.ts",
+    "test:regression": "tsx tests/regression_fixtures.test.ts && tsx tests/regression.test.ts",
+    "test:live": "tsx tests/live.ts",
+    "audit:deps": "npm audit --omit=dev",
+    "scan:secrets": "tsx scripts/scan-secrets.ts",
+    "provider:qualify": "tsx scripts/qualify-provider.ts",
     "prepare": "husky"
   },
   "dependencies": {
@@ -22,7 +30,8 @@
     "pdf2json": "^4.0.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -32,6 +41,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
+    "fast-check": "^4.10.2",
     "husky": "^9.1.7",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",

@@ -22,8 +22,25 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": "warn",
       "prefer-const": "warn",
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/lib/ai", "**/lib/ai/*"],
+              message: "Scoring, matching, and evidence modules must remain pure and may NOT import from lib/ai/*."
+            }
+          ]
+        }
+      ]
     },
   },
+  {
+    files: ["lib/ai/**", "lib/pipeline/**", "app/**"],
+    rules: {
+      "no-restricted-imports": "off",
+    }
+  }
 ]);
 
 export default eslintConfig;

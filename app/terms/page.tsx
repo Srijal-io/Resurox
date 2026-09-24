@@ -181,7 +181,7 @@ export default function TermsPage() {
               </h2>
             </div>
             <p className="font-serif text-sm sm:text-base text-[#1C1B19]/85 leading-relaxed">
-              Resurox is currently provided free of charge under a &ldquo;Bring Your Own AI&rdquo; (BYO) model. We do not process payments, bill subscriptions, or charge fees for core workbench analysis. Any usage costs incurred with third-party AI providers (e.g. OpenAI, OpenRouter, Google) via your personal API keys are billed directly by those respective providers under your separate agreement with them.
+              Resurox is currently provided free of charge under a server-managed AI model. We do not process payments, bill subscriptions, or charge fees for core workbench analysis. Any usage costs incurred with external AI providers are billed directly by those respective service providers under your separate agreement with them.
             </p>
           </section>
 

@@ -56,7 +56,7 @@
 
 ## 🚀 Key Features & Capabilities
 
-- **Multi-Provider AI Intelligence**: Seamlessly switch between **OpenRouter**, **Google Gemini**, and **OpenAI** via in-browser configuration or environment fallbacks.
+- **Multi-Provider AI Intelligence**: Engineered with a **provider-agnostic architecture** (configured with Groq Cloud, local mock providers, and expandable to any OpenAI-compatible or Google Gemini model).
 - **Server-Side Document Text Extraction**: High-fidelity parsing of `.pdf` (via `pdf2json`) and `.docx` (via `mammoth`) documents with strict 5MB limits.
 - **Joint Vocabulary Term Frequency Cosine Similarity**: Mathematical vector similarity matching between resume content and job requirements.
 - **GitHub Public Profile Enrichment**: Optional real-time enrichment resolving public candidate repositories, primary languages, and star metrics.
@@ -187,13 +187,9 @@ Populate your `.env.local` with one or more provider keys:
 # Base Application URL
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 
-# Primary Server-Side Fallback Key (Choose at least one)
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-GEMINI_API_KEY=your_gemini_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
-
-# Optional Default Model Override
-OPENROUTER_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
+# Server-Side Provider Credentials & Selection
+AI_PROVIDER_ORDER=groq-free
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
 ### 4. Start Development Server
