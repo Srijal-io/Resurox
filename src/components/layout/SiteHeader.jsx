@@ -39,8 +39,19 @@ export function SiteHeader({ className = '' }) {
           </Link>
         </nav>
 
-        {/* Right CTA Button */}
-        <div className="flex items-center">
+        {/* Right Action Buttons */}
+        <div className="flex items-center space-x-3">
+          <a
+            href="https://github.com/Srijal-io/Resurox"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 font-mono text-xs font-bold uppercase tracking-wider text-[#1C1B19] border border-[#1C1B19]/30 hover:border-[#1C1B19] hover:bg-[#1C1B19]/5 px-3.5 py-2 transition-colors no-underline"
+          >
+            <svg className="w-3.5 h-3.5 fill-current text-[#7A1F1F]" viewBox="0 0 24 24">
+              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+            </svg>
+            <span>Star on GitHub</span>
+          </a>
           <Button variant="outline" href={APP_URL} className="px-4 py-2">
             TRY NOW
           </Button>
