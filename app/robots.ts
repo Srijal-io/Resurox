@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next';
 
 export default function robots(): MetadataRoute.Robots {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://resurox.app';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ai-resume-analyzer-six-jet.vercel.app';
 
   return {
     rules: [

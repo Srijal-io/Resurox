@@ -1,7 +1,7 @@
 import React from 'react';
 
 export function JsonLd() {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://resurox.app';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ai-resume-analyzer-six-jet.vercel.app';
 
   const organizationSchema = {
     '@context': 'https://schema.org',
