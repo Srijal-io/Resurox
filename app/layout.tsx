@@ -16,7 +16,7 @@ const plexMono = IBM_Plex_Mono({
   display: "swap",
 });
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://resurox.app';
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ai-resume-analyzer-six-jet.vercel.app';
 
 export const viewport: Viewport = {
   themeColor: "#F7F5F0",
